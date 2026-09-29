@@ -102,7 +102,7 @@ def check_reservation():
                     if d not in available_found:
                         available_found.append(d)
 
-        if True:
+        if available_found:
             dates_str = "、".join(sorted(available_found))
             msg = f"🎉 *【高千穗峽遊船】10月發現空位！*\n\n📅 可預訂日期：*10 月 {dates_str} 號*\n🔗 [點我立即前往預訂]({TARGET_URL})"
             print(f"✅ 發現空位：10 月 {dates_str} 號")
