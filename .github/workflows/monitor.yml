@@ -2,12 +2,12 @@ name: Takachiho Boat Reservation Monitor
 
 on:
   schedule:
-    # cron 排程：每 15 分鐘自動執行一次 (UTC 時間
     - cron: '*/5 * * * *'
-  workflow_dispatch: # 支援手動點擊按鈕觸發測試
+  workflow_dispatch:
 
 jobs:
   check-website:
+    # 後續內容...
     runs-on: ubuntu-latest
 
     steps:
