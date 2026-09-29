@@ -72,7 +72,7 @@ def check_reservation():
         print("✅ 成功切換至 10 月份頁面！")
 
         print("4. 開始詳細剖析 10 月 11、12、13 號 HTML 內容...")
-        target_dates = ["6", "12", "13"]
+        target_dates = ["11", "12", "13", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "14"]
         available_found = []
 
         # 搜尋日曆中所有的單元格
@@ -102,7 +102,7 @@ def check_reservation():
                     if d not in available_found:
                         available_found.append(d)
 
-        if True:
+        if available_found:
             dates_str = "、".join(sorted(available_found))
             msg = f"🎉 *【高千穗峽遊船】10月發現空位！*\n\n📅 可預訂日期：*10 月 {dates_str} 號*\n🔗 [點我立即前往預訂]({TARGET_URL})"
             print(f"✅ 發現空位：10 月 {dates_str} 號")
