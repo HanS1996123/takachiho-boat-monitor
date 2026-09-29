@@ -8,7 +8,7 @@ TARGET_URL = "https://eipro.jp/takachiho1/eventCalendars/index"
 
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("❌ 錯誤：未設定 TELEGRAM_TOKEN 或 TELEGRAM_CHAT_ID！")
+        print("❌ 錯誤 未設定 TELEGRAM_TOKEN 或 TELEGRAM_CHAT_ID！")
         return
     
     api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
