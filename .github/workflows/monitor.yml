@@ -7,7 +7,6 @@ on:
 
 jobs:
   check-website:
-    # 後續內容...
     runs-on: ubuntu-latest
 
     steps:
