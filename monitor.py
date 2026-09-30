@@ -1,116 +1,118 @@
 import os
+import time
 import requests
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from playwright.sync_api import sync_playwright
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-TARGET_URL = "https://eipro.jp/takachiho1/eventCalendars/index"
+# ---------------------------------------------------------
+# 1. Render Health Check 背景服務（防止免費容器被強制休眠）
+# ---------------------------------------------------------
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
 
-def send_telegram(message):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("❌ 錯誤 未設定 TELEGRAM_TOKEN 或 TELEGRAM_CHAT_ID！")
+    def log_message(self, format, *args):
+        # 隱藏 HTTP 請求 Log，保持 Console 畫面乾淨
         return
+
+def run_health_check_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
+
+# 啟動 HTTP 伺服器背景執行緒
+threading.Thread(target=run_health_check_server, daemon=True).start()
+
+
+# ---------------------------------------------------------
+# 2. Telegram 訊息推播函式
+# ---------------------------------------------------------
+def send_telegram_msg(message):
+    token = os.environ.get("TELEGRAM_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     
-    api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    if not token or not chat_id:
+        print("⚠️ 未設定 TELEGRAM_TOKEN 或 TELEGRAM_CHAT_ID，跳過訊息推播")
+        return
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
+        "chat_id": chat_id,
+        "text": message
     }
     try:
-        res = requests.post(api_url, json=payload, timeout=10)
-        print(f"Telegram 發送結果狀態碼: {res.status_code}")
-        if res.status_code != 200:
-            print("Telegram 回傳錯誤內容:", res.text)
+        res = requests.post(url, json=payload, timeout=10)
+        if res.status_code == 200:
+            print("✅ Telegram 通知發送成功！")
+        else:
+            print(f"❌ Telegram 發送失敗: {res.text}")
     except Exception as e:
-        print("Telegram 發送失敗:", e)
+        print(f"❌ 發送 Telegram 訊息發生例外: {e}")
 
-def check_reservation():
+
+# ---------------------------------------------------------
+# 3. 高千穗峽划船預約監控主邏輯 (Playwright)
+# ---------------------------------------------------------
+def run_monitor():
+    current_time = time.strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{current_time}] 開始執行高千穗峽預約狀況檢查...")
+    
+    # 目標日期（10/11, 10/12, 10/13）與預約網站
+    target_dates = ["10/11", "10/12", "10/13"]
+    url = "https://takachiho-kanko.jp/boat/reservation/"  # 替換為實際高千穗峽預約網址
+    available_dates = []
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
 
-        print("1. 前往高千穗遊船預訂頁面...")
-        page.goto(TARGET_URL, wait_until="networkidle")
-
-        print("2. 切換至「月」視圖...")
         try:
-            page.click("text='月'", timeout=5000)
-            page.wait_for_timeout(2000)
-        except Exception as e:
-            print("注意：點擊「月」按鈕狀況：", e)
-
-        print("3. 切換至 10 月...")
-        switched = False
-        arrow_selectors = ["a:has-text('▷')", "span:has-text('▷')", "button:has-text('▷')", ".fc-button-next"]
-        for sel in arrow_selectors:
-            try:
-                if page.locator(sel).count() > 0:
-                    page.click(sel, timeout=2000)
-                    switched = True
-                    break
-            except Exception:
-                continue
-
-        if not switched:
-            page.evaluate("""() => {
-                const elements = Array.from(document.querySelectorAll('*'));
-                const target = elements.find(el => el.children.length === 0 && el.textContent.includes('▷'));
-                if (target) target.click();
-            }""")
-
-        # 等待 4 秒確保 AJAX 與動態圖像完整載入
-        page.wait_for_timeout(4000)
-
-        # 驗證月份
-        body_text = page.inner_text("body")
-        if "2026/10" not in body_text and "10月" not in body_text:
-            print("❌ 錯誤：頁面未切換至 10 月，本次檢查中斷！")
-            browser.close()
-            return
-
-        print("✅ 成功切換至 10 月份頁面！")
-
-        print("4. 開始詳細剖析 10 月 11、12、13 號 HTML 內容...")
-        target_dates = ["11", "12", "13", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "14"]
-        available_found = []
-
-        # 搜尋日曆中所有的單元格
-        cells = page.query_selector_all("td")
-        for cell in cells:
-            text = cell.inner_text().strip()
-            lines = [l.strip() for l in text.split("\n") if l.strip()]
+            page.goto(url, wait_until="networkidle", timeout=60000)
             
-            # 精準比對：只有當第一行數字「完全等於」11、12 或 13 時才處理
-            if lines and lines[0] in target_dates:
-                d = lines[0]
-                html_content = cell.inner_html().strip()
+            # 過濾跨月無效日期，取得當月日曆儲存格 (.fc-daygrid-day:not(.fc-other-month))
+            day_cells = page.query_selector_all(".fc-daygrid-day:not(.fc-other-month)")
+
+            for cell in day_cells:
+                cell_text = cell.inner_text()
                 
-                # 在 Log 記錄完整的 HTML 碼供除錯（防範圖片或 class 標示）
-                print(f"🔍 [除錯 Log] 10 月 {d} 號 HTML 碼：{html_content}")
+                # 檢查是否包含目標日期
+                for target_date in target_dates:
+                    if target_date in cell_text:
+                        # 判斷有無空位（非滿員/非✕，或包含 ○/殘數標示）
+                        if ("滿員" not in cell_text and "✕" not in cell_text) or ("○" in cell_text or "殘" in cell_text):
+                            available_dates.append(target_date)
 
-                # 判定不可預訂的關鍵特徵 (文字、圖片檔名或 class)
-                blocked_keywords = ["×", "✕", "沙漏", "close", "soldout", "ng", "batsu", "disabled"]
-                is_blocked = any(kw in html_content.lower() for kw in blocked_keywords)
+            # 抓到空位時發送 Telegram 警報
+            if available_dates:
+                unique_dates = ", ".join(sorted(list(set(available_dates))))
+                alert_msg = f"🚨【高千穗峽划船釋出空位！】\n\n發現以下日期有空位：{unique_dates}\n請立刻前往搶票：\n{url}"
+                print(alert_msg)
+                send_telegram_msg(alert_msg)
+            else:
+                print("ℹ️ 目前 10/11 - 10/13 均無空位，持續監控中...")
 
-                # 判定可預訂的關鍵特徵
-                available_keywords = ["○", "△", "空", "予約", "ok", "open", "maru"]
-                has_available = any(kw in html_content.lower() for kw in available_keywords)
+        except Exception as e:
+            print(f"❌ 爬蟲網頁抓取失敗: {e}")
+        finally:
+            browser.close()
 
-                # 只有在「沒有不可預訂特徵」且「有可預訂標示」時，才認定有空位
-                if not is_blocked and has_available:
-                    if d not in available_found:
-                        available_found.append(d)
 
-        if available_found:
-            dates_str = "、".join(sorted(available_found))
-            msg = f"🎉 *【高千穗峽遊船】10月發現空位！*\n\n📅 可預訂日期：*10 月 {dates_str} 號*\n🔗 [點我立即前往預訂]({TARGET_URL})"
-            print(f"✅ 發現空位：10 月 {dates_str} 號")
-            send_telegram(msg)
-        else:
-            print("ℹ️ 檢查完成：10 月 11、12、13 號目前均無開放空位。")
-
-        browser.close()
-
+# ---------------------------------------------------------
+# 4. 主程式：24 Hours / 7 Days 無限迴圈 (每 5 分鐘跑一次)
+# ---------------------------------------------------------
 if __name__ == "__main__":
-    check_reservation()
+    print("🚀 高千穗峽划船預約監控服務已啟動（每 5 分鐘自動檢查一次）...")
+    while True:
+        try:
+            run_monitor()
+        except Exception as e:
+            print(f"❌ 主程序運作異常: {e}")
+        
+        print("⏳ 等待 5 分鐘後進行下一輪檢查...\n")
+        time.sleep(300)  # 300 秒 = 5 分鐘
